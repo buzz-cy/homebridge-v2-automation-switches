@@ -1,14 +1,21 @@
 
+<p align="center">
+
+<img src="https://github.com/homebridge/branding/raw/latest/logos/homebridge-wordmark-logo-vertical.png" width="150">
+
+</p>
+
+<span align="center">
+
+### Homebridge V2
 # Automation Switches Platform
 
+</span>
+
+<img src="https://img.shields.io/badge/node-^18.20.4%20%7C%7C%20^20.15.1%20%7C%7C%20^22-brightgreen"> &nbsp;
+<img src="https://img.shields.io/badge/homebridge-^1.8.0%20%7C%7C%20^2.0.0.beta.0-brightgreen">
+
 A platform that provides configurable switches for automation purposes. This platform can be created to provide time delayed responses in HomeKit rules or to simulate security systems.
-
-## Status
-
-[![HitCount](http://hits.dwyl.io/grover/homebridge-automation-switches.svg)](https://github.com/grover/homebridge-automation-switches)
-[![Build Status](https://travis-ci.org/grover/homebridge-automation-switches.png?branch=master)](https://travis-ci.org/grover/homebridge-automation-switches)
-[![Node version](https://img.shields.io/node/v/homebridge-automation-switches.svg?style=flat)](http://nodejs.org/download/)
-[![NPM Version](https://badge.fury.io/js/homebridge-automation-switches.svg?style=flat)](https://npmjs.org/package/homebridge-automation-switches)
 
 ## Why do we need this plugin?
 
