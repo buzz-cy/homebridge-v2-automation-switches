@@ -20,7 +20,7 @@ const HomeKitTypes = require('./HomeKitTypes');
 const ClockTypes = require('./hap/ClockTypes');
 const SolarTypes = require('./hap/SolarTypes');
 const RandomTypes = require('./hap/RandomTypes');
-
+const AutomationSwitchTypes = require('./hap/AutomationSwitchTypes');
 
 const HOMEBRIDGE = {
   Accessory: null,
@@ -29,16 +29,13 @@ const HOMEBRIDGE = {
   UUIDGen: null
 };
 
-const platformName = 'homebridge-switches';
-const platformPrettyName = 'AutomationSwitches';
+module.exports = (api) => {
+  HOMEBRIDGE.Accessory = api.platformAccessory;
+  HOMEBRIDGE.Service = api.hap.Service;
+  HOMEBRIDGE.Characteristic = api.hap.Characteristic;
+  HOMEBRIDGE.UUIDGen = api.hap.uuid;
 
-module.exports = (homebridge) => {
-  HOMEBRIDGE.Accessory = homebridge.platformAccessory;
-  HOMEBRIDGE.Service = homebridge.hap.Service;
-  HOMEBRIDGE.Characteristic = homebridge.hap.Characteristic;
-  HOMEBRIDGE.UUIDGen = homebridge.hap.uuid;
-
-  homebridge.registerPlatform(platformName, platformPrettyName, AutomationSwitchesPlatform, true);
+  api.registerPlatform("homebridge-v2-automation-switches", "AutomationSwitches", AutomationSwitchesPlatform);
 };
 
 const SerialNumberPrefixes = {
@@ -52,8 +49,11 @@ const SerialNumberPrefixes = {
   random: 'RA'
 };
 
-const AutomationSwitchesPlatform = class {
+class AutomationSwitchesPlatform {
   constructor(log, config, api) {
+    if (!log || typeof log !== "function") {
+      throw new Error("log is undefined or not a function in AutomationSwitchesPlatform. Check plugin registration.");
+    }
     this.log = log;
     this.log(`AutomationSwitchesPlatform Plugin Loaded - Version ${version}`);
     this.config = config;
@@ -63,6 +63,7 @@ const AutomationSwitchesPlatform = class {
     ClockTypes.registerWith(api.hap);
     SolarTypes.registerWith(api.hap);
     RandomTypes.registerWith(api.hap);
+    AutomationSwitchTypes.registerWith(api.hap);
 
     this._factories = {
       automation: this._createAutomationSwitch.bind(this),
@@ -74,105 +75,198 @@ const AutomationSwitchesPlatform = class {
       solarclock: this._createSolarClock.bind(this),
       random: this._createRandom.bind(this)
     };
+
+    this.api.on('didFinishLaunching', () => {
+      this._registerAccessories();
+    });
   }
 
-  accessories(callback) {
-    let _accessories = [];
+  _registerAccessories() {
+    const _accessories = [];
     const { switches } = this.config;
 
+    if (!switches || !Array.isArray(switches)) {
+      this.log.warn("No valid switches found in config.json.");
+      return;
+    }
+
     switches.forEach(sw => {
-      this.log(`Found automation switch in config: "${sw.name}"`);
-      if (sw.name === undefined || sw.name.length === 0) {
-        throw new Error('Invalid configuration: Automation switch name is invalid.');
+      if (!sw.name || sw.name.trim().length === 0) {
+        this.log.error("Invalid configuration: Automation switch name is missing.");
+        return;
       }
 
-      if (sw.type === undefined) {
-        this.log(`Warning: ${sw.name} does not specify a type. Please update your configuration`);
-        this.log(`to include "type": "automation" for ${sw.name} or it'll fail to run in the future.`);
+      if (!sw.type) {
+        this.log(`⚠️ ${sw.name} does not specify a type. Defaulting to 'automation'.`);
         sw.type = 'automation';
       }
 
       const factory = this._factories[sw.type];
-      if (factory === undefined) {
-        this.log(`Invalid automation switch - type is unknown: ${util.inspect(sw)}`);
-        this.log('Skipping.');
+      if (!factory) {
+        this.log(`Unknown switch type for ${sw.name}: ${util.inspect(sw)}`);
         return;
       }
 
       sw.serialNumber = SerialNumberGenerator.generate(SerialNumberPrefixes[sw.type], sw.name);
 
       const storage = this._createStorage(sw);
-
       const accessory = factory(sw, storage);
       _accessories.push(accessory);
     });
 
-    callback(_accessories);
+    if (_accessories.length > 0) {
+      this.api.registerPlatformAccessories("homebridge-v2-automation-switches", "AutomationSwitches", _accessories);
+      this.log(`Successfully registered ${_accessories.length} accessories.`);
+    } else {
+      this.log.warn("No accessories were successfully registered.");
+    }
   }
 
   _createStorage(sw) {
-    if (this._shouldStoreSwitchState(sw)) {
-      const type = this._sanitizeTypeForStorage(sw.type);
-      return new StorageWrapper(this.api, this.log, type, sw.name);
-    }
-
-    return new FakeStorageWrapper();
+    return this._shouldStoreSwitchState(sw)
+      ? new StorageWrapper(this.api, this.log, this._sanitizeTypeForStorage(sw.type), sw.name)
+      : new FakeStorageWrapper();
   }
 
   _shouldStoreSwitchState(sw) {
-    return sw.stored === true
-      || (sw.type === 'security' && sw.stored !== false);
+    return sw.stored === true || (sw.type === 'security' && sw.stored !== false);
   }
 
   _sanitizeTypeForStorage(type) {
-    if (type === 'security') {
-      type = 'SecuritySystem';
-    }
-
-    return type;
+    return type === 'security' ? 'SecuritySystem' : type;
   }
 
   _createAutomationSwitch(sw, storage) {
-    // Make sure minimal configuration is set
-    sw.autoOff = typeof sw.autoOff !== 'undefined' ? sw.autoOff : true;
+    sw.autoOff = sw.autoOff !== undefined ? sw.autoOff : true;
     sw.period = sw.period || 60;
     sw.version = version;
+    const uuid = this.api.hap.uuid.generate(sw.serialNumber);
+    const accessory = new this.api.platformAccessory(sw.name, uuid);
+  
+    const automationSwitch = new AutomationSwitchAccessory(this.api, this.log, sw, storage);
+    
+    automationSwitch.getServices().forEach(service => {
+        if (!(service instanceof this.api.hap.Service.AccessoryInformation)) {
+            accessory.addService(service);
+        }
+    });
 
-    return new AutomationSwitchAccessory(this.api, this.log, sw, storage);
+    return accessory;
   }
 
-  _createSecuritySwitch(sw, storage) {
-    sw.version = version;
-    return new SecuritySystemAccessory(this.api, this.log, sw, storage);
+    _createSecuritySwitch(sw, storage) {
+      sw.version = version;
+      const uuid = this.api.hap.uuid.generate(sw.serialNumber);
+      const accessory = new this.api.platformAccessory(sw.name, uuid);
+      
+      const securitySwitch = new SecuritySystemAccessory(this.api, this.log, sw, storage);
+
+      securitySwitch.getServices().forEach(service => {
+          if (!(service instanceof this.api.hap.Service.AccessoryInformation)) {
+              accessory.addService(service);
+          }
+      });
+
+      return accessory;
   }
 
   _createLockMechanism(sw, storage) {
-    sw.version = version;
-    return new LockMechanismAccessory(this.api, this.log, sw, storage);
+      sw.version = version;
+      const uuid = this.api.hap.uuid.generate(sw.serialNumber);
+      const accessory = new this.api.platformAccessory(sw.name, uuid);
+      
+      const lockMechanism = new LockMechanismAccessory(this.api, this.log, sw, storage);
+
+      lockMechanism.getServices().forEach(service => {
+          if (!(service instanceof this.api.hap.Service.AccessoryInformation)) {
+              accessory.addService(service);
+          }
+      });
+
+      return accessory;
   }
 
   _createSwitch(sw, storage) {
-    sw.version = version;
-    return new SwitchAccessory(this.api, this.log, sw, storage);
+      sw.version = version;
+      const uuid = this.api.hap.uuid.generate(sw.serialNumber);
+      const accessory = new this.api.platformAccessory(sw.name, uuid);
+      
+      const switchAccessory = new SwitchAccessory(this.api, this.log, sw, storage);
+
+      switchAccessory.getServices().forEach(service => {
+          if (!(service instanceof this.api.hap.Service.AccessoryInformation)) {
+              accessory.addService(service);
+          }
+      });
+
+      return accessory;
   }
 
   _createSlider(sw, storage) {
-    sw.version = version;
-    return new SliderAccessory(this.api, this.log, sw, storage);
+      sw.version = version;
+      const uuid = this.api.hap.uuid.generate(sw.serialNumber);
+      const accessory = new this.api.platformAccessory(sw.name, uuid);
+      
+      const sliderAccessory = new SliderAccessory(this.api, this.log, sw, storage);
+
+      sliderAccessory.getServices().forEach(service => {
+          if (!(service instanceof this.api.hap.Service.AccessoryInformation)) {
+              accessory.addService(service);
+          }
+      });
+
+      return accessory;
   }
 
   _createAlarmClock(sw, storage) {
-    sw.version = version;
-    return new AlarmClockAccessory(this.api, this.log, sw, storage);
+      sw.version = version;
+      const uuid = this.api.hap.uuid.generate(sw.serialNumber);
+      const accessory = new this.api.platformAccessory(sw.name, uuid);
+      
+      const alarmClockAccessory = new AlarmClockAccessory(this.api, this.log, sw, storage);
+
+      alarmClockAccessory.getServices().forEach(service => {
+          if (!(service instanceof this.api.hap.Service.AccessoryInformation)) {
+              accessory.addService(service);
+          }
+      });
+
+      return accessory;
   }
 
   _createSolarClock(sw, storage) {
     sw.version = version;
-    return new SolarClockAccessory(this.api, this.log, sw, storage);
+    const uuid = this.api.hap.uuid.generate(sw.serialNumber);
+    const accessory = new this.api.platformAccessory(sw.name, uuid);
+    
+    const solarClock = new SolarClockAccessory(this.api, this.log, sw, storage);
+
+    solarClock.getServices().forEach((service, index) => {
+      if (!(service instanceof this.api.hap.Service.AccessoryInformation)) {
+          const existingService = accessory.getService(service.UUID);
+          if (existingService) {
+              accessory.removeService(existingService); // Remove duplicates
+          }
+          accessory.addService(service, `${sw.name} Service ${index}`);
+      }
+    });
+
+    return accessory;
   }
 
   _createRandom(sw, storage) {
-    sw.version = version;
-    return new RandomAccessory(this.api, this.log, sw, storage);
+      sw.version = version;
+      const uuid = this.api.hap.uuid.generate(sw.serialNumber);
+      const accessory = new this.api.platformAccessory(sw.name, uuid);
+      
+      const randomAccessory = new RandomAccessory(this.api, this.log, sw, storage);
+
+      randomAccessory.getServices().forEach(service => {
+          if (!(service instanceof this.api.hap.Service.AccessoryInformation)) {
+              accessory.addService(service);
+          }
+      });
+
+      return accessory;
   }
 };

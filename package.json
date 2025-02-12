@@ -1,9 +1,9 @@
 {
-  "name": "homebridge-automation-switches",
+  "name": "homebridge-v2-automation-switches",
   "author": {
-    "name": "Michael Froehlich"
+    "name": "Marios C."
   },
-  "version": "3.2.1",
+  "version": "0.1.0",
   "description": "A platform for automation switches for HomeKit via Homebridge",
   "license": "MIT",
   "main": "src/index.js",
@@ -16,22 +16,23 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git://github.com/grover/homebridge-automation-switches.git"
+    "url": "git://github.com/buzz-cy/homebridge-v2-automation-switches.git"
   },
   "bugs": {
-    "url": "http://github.com/grover/homebridge-automation-switches/issues"
+    "url": "http://github.com/buzz-cy/homebridge-v2-automation-switches/issues"
   },
   "engines": {
-    "node": ">=9.3.0",
-    "homebridge": ">=0.4.36"
+    "node": "^18.20.4 || ^20.15.1 || ^22",
+    "homebridge": "^1.6.0 || ^2.0.0 || ^2.0.0-beta"
   },
   "dependencies": {
-    "clone": "^2.1.1",
-    "node-persist": "^0.0.11",
-    "suncalc": "^1.8.0"
+    "clone": "^2.1.2",
+    "moment-timezone": "^0.5.47",
+    "node-persist": "^4.0.4",
+    "suncalc": "^1.9.0"
   },
   "devDependencies": {
-    "eslint": "^4.19.1"
+    "eslint": "^8.52.0"
   },
   "scripts": {
     "lint": "./node_modules/.bin/eslint src",

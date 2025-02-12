@@ -1,4 +1,8 @@
-# homebridge-automation-switches Contributors (sorted alphabetically)
+# homebridge-v2-automation-switches Contributors (sorted alphabetically)
+
+* [@buzz-cy](https://github.com/buzz-cy)
+
+  * Forked homebridge-automation-switches
 
 * [@grover](https://github.com/grover)
 

@@ -1,6 +1,7 @@
 'use strict';
 
 const clone = require('clone');
+const moment = require('moment-timezone');
 
 let Accessory, Characteristic, Service;
 
@@ -12,32 +13,26 @@ class AlarmClockAccessory {
     Service = api.hap.Service;
 
     this.log = log;
-    this.name = config.name;
+    this.name = config.name.replace(/[^a-zA-Z0-9 ']/g, '').trim();
+    if (!/^[a-zA-Z0-9]/.test(this.name)) {
+        this.name = 'Accessory ' + this.name;
+    }
     this._config = config;
-
-    this._alarmValue = Characteristic.ContactSensorState.CONTACT_NOT_DETECTED;
-    this._noAlarmValue = Characteristic.ContactSensorState.CONTACT_DETECTED;
-
-    this.log(`Timezone is ${process.env.TZ}`);
-    this.log(`Local time is ${new Date().toLocaleString()}`);
-    this.log(`UTC time is ${new Date().toUTCString()}`);
-
     this._storage = storage;
 
-    const defaultValue = {
-      hour: config.hour || 12,
-      minute: config.minute || 0,
-      enabled: config.enabled === undefined ? false : config.enabled
+    this._state = {
+      hour: config.defaultHour !== undefined ? config.defaultHour : 9,
+      minute: config.defaultMinute !== undefined ? config.defaultMinute : 0,
+      timezone: config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      enabled: config.enabled !== undefined ? config.enabled : true
     };
 
-    storage.retrieve(defaultValue, (error, value) => {
-      this._state = value;
+    if (!this._state.timezone) {
+      this.log(`⚠️ Timezone is undefined, setting to UTC`);
+      this._state.timezone = 'UTC';
+    }
 
-      if (this._state.enabled) {
-        this._scheduleAlarmClock();
-      }
-    });
-
+    this._restoreState();
     this._services = this.createServices();
   }
 
@@ -48,7 +43,6 @@ class AlarmClockAccessory {
   createServices() {
     return [
       this.getAccessoryInformationService(),
-      this.getBridgingStateService(),
       this.getClockService(),
       this.getEnabledSwitchService(),
       this.getContactSensorService()
@@ -58,8 +52,8 @@ class AlarmClockAccessory {
   getAccessoryInformationService() {
     return new Service.AccessoryInformation()
       .setCharacteristic(Characteristic.Name, this.name)
-      .setCharacteristic(Characteristic.Manufacturer, 'Michael Froehlich')
-      .setCharacteristic(Characteristic.Model, 'Switch')
+      .setCharacteristic(Characteristic.Manufacturer, 'Buzz-cy')
+      .setCharacteristic(Characteristic.Model, 'Alarm Clock')
       .setCharacteristic(Characteristic.SerialNumber, this._config.serialNumber)
       .setCharacteristic(Characteristic.FirmwareRevision, this._config.version)
       .setCharacteristic(Characteristic.HardwareRevision, this._config.version);
@@ -74,124 +68,178 @@ class AlarmClockAccessory {
   }
 
   getClockService() {
-    this._clockService = new Service.Clock(`${this.name} Time`);
-    this._clockService.getCharacteristic(Characteristic.ClockHour)
-      .on('set', this._setHour.bind(this))
-      .updateValue(this._state.hour);
-    this._clockService.getCharacteristic(Characteristic.ClockMinute)
-      .on('set', this._setMinute.bind(this))
-      .updateValue(this._state.minute);
+    this._clockService = new Service.Lightbulb(this.name); 
+
+    this._clockService.getCharacteristic(Characteristic.On)
+      .on('set', this._setEnabledState.bind(this))
+      .on('get', callback => callback(null, this._state.enabled));
+
+      this._clockService.getCharacteristic(Characteristic.Brightness)
+      .on('set', async (value, callback) => {
+          value = Math.max(0.0001, Math.min(value, 100)); // Ensure valid range
+  
+          this.log(`Setting brightness for ${this.name} to ${value}`);
+          this._state.brightness = value;
+  
+          try {
+              await this._persist(this._state);
+              this.log(`Brightness updated successfully: ${value}`);
+              callback();
+          } catch (error) {
+              this.log(`Failed to persist brightness: ${error}`);
+              callback(error);
+          }
+      })
+      .on('get', callback => {
+          callback(null, this._state.brightness || 50);
+      });
 
     return this._clockService;
   }
 
   getEnabledSwitchService() {
-    this._switchService = new Service.Switch(`${this.name} Enabled`);
-    this._switchService.getCharacteristic(Characteristic.On)
+    this._enabledService = new Service.Switch(this.name + " Enabled");
+    this._enabledService.getCharacteristic(Characteristic.On)
       .on('set', this._setEnabledState.bind(this))
-      .updateValue(this._state.enabled);
+      .on('get', callback => callback(null, this._state.enabled));
 
-    this._switchService.isPrimaryService = true;
-
-    return this._switchService;
+    return this._enabledService;
   }
 
   getContactSensorService() {
-    this._contactSensor = new Service.ContactSensor(`${this.name} Alarm`);
-    this._contactSensor.getCharacteristic(Characteristic.ContactSensorState)
-      .updateValue(this._noAlarmValue);
+    this._contactSensorService = new Service.ContactSensor(this.name + " Trigger");
+    this._contactSensorService.getCharacteristic(Characteristic.ContactSensorState)
+      .on('get', callback => callback(null, this._state.enabled ? Characteristic.ContactSensorState.CONTACT_DETECTED : Characteristic.ContactSensorState.CONTACT_NOT_DETECTED));
 
-    return this._contactSensor;
+    return this._contactSensorService;
   }
 
-  identify(callback) {
-    this.log(`Identify requested on ${this.name}`);
-    callback();
-  }
+  async _setEnabledState(value, callback) {
+    this.log(`Changing enabled state of ${this.name} to ${value}`);
+    this._state.enabled = value;
 
-  _setHour(value, callback) {
-    this.log(`Change target hour of ${this.name} to ${value}`);
+    this._clockService.getCharacteristic(Characteristic.On).updateValue(value);
+    this._enabledService.getCharacteristic(Characteristic.On).updateValue(value);
 
-    const data = clone(this._state);
-    data.hour = value;
-
-    this._persist(data, callback);
-  }
-
-  _setMinute(value, callback) {
-    this.log(`Change target minute of ${this.name} to ${value}`);
-
-    const data = clone(this._state);
-    data.minute = value;
-
-    this._persist(data, callback);
-  }
-
-  _setEnabledState(value, callback) {
-    this.log(`Change enabled state of ${this.name} to ${value}`);
-
-    const data = clone(this._state);
-    data.enabled = value;
-
-    this._persist(data, callback);
-  }
-
-  _persist(data, callback) {
-    this._storage.store(data, (error) => {
-      if (error) {
+    try {
+        await this._persist(this._state);
+        this.log(`Alarm ${this.name} is now ${value ? 'enabled' : 'disabled'}`);
+        callback();
+    } catch (error) {
+        this.log(`Failed to persist alarm state: ${error}`);
         callback(error);
-        return;
-      }
-
-      this._state = data;
-      callback();
-
-      this._restartAlarmTimer();
-    });
+    }
   }
 
-  _restartAlarmTimer() {
-    if (this._timer) {
-      clearTimeout(this._timer);
+  async _setAlarmTime(value, callback) {
+    if (!Number.isFinite(value)) {
+        this.log(`Invalid alarm time received: ${value}. Resetting to default.`);
+        value = 9 * 60; //TO DO
     }
 
-    if (this._state.enabled) {
-      this._scheduleAlarmClock();
+    let newHour = Math.floor(value / 60);
+    let newMinute = value % 60;
+
+    this.log(`Setting new alarm time for ${this.name}: ${newHour}:${newMinute}`);
+
+    this._state.hour = newHour;
+    this._state.minute = newMinute;
+
+    try {
+        await this._persist(this._state);
+        this.log(`Alarm time updated successfully: ${newHour}:${newMinute}`);
+        this._scheduleAlarmClock();
+        callback();
+    } catch (error) {
+        this.log(`Failed to persist alarm time: ${error}`);
+        callback(error);
     }
   }
 
   _scheduleAlarmClock() {
-    // Figure out if the time is still today or the next day and set a timer
-    const now = new Date();
-    const alarm = new Date();
-
-    alarm.setHours(this._state.hour, this._state.minute, 0);
-    if (now > alarm) {
-      // Alarm is tomorrow - add a day
-      alarm.setDate(alarm.getDate() + 1);
+    if (this._alarmTimeout) {
+      clearTimeout(this._alarmTimeout);
     }
 
-    this.log(`Raising next alarm at ${alarm.toLocaleString()}`);
+    let now = moment().tz(this._state.timezone);
+    let alarmTime = now.clone().hour(this._state.hour).minute(this._state.minute).second(0);
 
-    const diff = alarm.valueOf() - now.valueOf();
-    // this.log(`Diff=${diff}, now=${now.valueOf()} (${now.toLocaleString()}), alarm=${alarm.valueOf()}`);
-    this._timer = setTimeout(this._alarm.bind(this), diff);
+    if (alarmTime.isBefore(now)) {
+      alarmTime.add(1, 'day');
+    }
+
+    let delay = alarmTime.diff(now);
+
+    this.log(`Scheduling next alarm for ${this.name} at ${alarmTime.format('LLLL')}`);
+
+    this._alarmTimeout = setTimeout(() => this._alarm(), delay);
   }
 
   _alarm() {
-    this.log('Alarm!');
-    this._contactSensor.getCharacteristic(Characteristic.ContactSensorState)
-      .updateValue(this._alarmValue);
+    this.log(`Alarm triggered for ${this.name}`);
 
-    setTimeout(this._silenceAlarm.bind(this), 1000);
+    if (this._contactSensorService) {
+      this._contactSensorService.getCharacteristic(Characteristic.ContactSensorState)
+        .updateValue(Characteristic.ContactSensorState.CONTACT_DETECTED);
+    }
+
+    if (this._clockService) {
+      this._clockService.getCharacteristic(Characteristic.On)
+        .updateValue(true);
+    }
+
+    setTimeout(() => this._silenceAlarm(), 60000); 
   }
 
   _silenceAlarm() {
-    this.log('Alarm silenced!');
-    this._contactSensor.getCharacteristic(Characteristic.ContactSensorState)
-      .updateValue(this._noAlarmValue);
+    this.log(`Silencing alarm for ${this.name}`);
+
+    if (this._contactSensorService) {
+      this._contactSensorService.getCharacteristic(Characteristic.ContactSensorState)
+        .updateValue(Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+    }
+
+    if (this._clockService) {
+      this._clockService.getCharacteristic(Characteristic.On)
+        .updateValue(false);
+    }
+
     this._scheduleAlarmClock();
   }
+
+  async _persist(data) {
+    try {
+        await this._storage.store(data);
+        this._state = { ...this._state, ...data };
+
+        this._clockService.getCharacteristic(Characteristic.On).updateValue(this._state.enabled);
+        this._clockService.getCharacteristic(Characteristic.Brightness).updateValue(this._state.brightness || 50);
+        this._enabledService.getCharacteristic(Characteristic.On).updateValue(this._state.enabled);
+    } catch (error) {
+        this.log(`Failed to persist alarm state: ${error}`);
+    }
+  }
+
+  async _restoreState() {
+    try {
+        const storedState = await this._storage.retrieve();
+        
+        if (storedState) {
+            this._state = { ...this._state, ...storedState };
+        } else {
+            this.log(`No stored state found for ${this.name}, using defaults.`);
+        }
+
+        this._clockService.getCharacteristic(Characteristic.On).updateValue(this._state.enabled);
+        this._clockService.getCharacteristic(Characteristic.Brightness).updateValue(this._state.brightness || 50);
+        this._enabledService.getCharacteristic(Characteristic.On).updateValue(this._state.enabled);
+
+        this._scheduleAlarmClock(); // Reschedule alarm after restoring
+    } catch (error) {
+        this.log(`Failed to restore state for ${this.name}: ${error}`);
+    }
+  }
+
 }
 
 module.exports = AlarmClockAccessory;

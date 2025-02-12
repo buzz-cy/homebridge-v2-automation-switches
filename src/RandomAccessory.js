@@ -10,7 +10,10 @@ class RandomAccessory {
     Service = api.hap.Service;
 
     this.log = log;
-    this.name = config.name;
+    this.name = config.name.replace(/[^a-zA-Z0-9 ']/g, '').trim();
+    if (!/^[a-zA-Z0-9]/.test(this.name)) {
+        this.name = 'Accessory ' + this.name;
+    }
     this.config = config;
 
     this._state = {
@@ -29,7 +32,6 @@ class RandomAccessory {
   createServices() {
     return [
       this.getAccessoryInformationService(),
-      this.getBridgingStateService(),
       this.getSwitchService(),
     ];
   }
@@ -37,19 +39,11 @@ class RandomAccessory {
   getAccessoryInformationService() {
     return new Service.AccessoryInformation()
       .setCharacteristic(Characteristic.Name, this.name)
-      .setCharacteristic(Characteristic.Manufacturer, 'Michael Froehlich')
+      .setCharacteristic(Characteristic.Manufacturer, 'Buzz-cy')
       .setCharacteristic(Characteristic.Model, 'Switch')
       .setCharacteristic(Characteristic.SerialNumber, this.config.serialNumber)
       .setCharacteristic(Characteristic.FirmwareRevision, this.config.version)
       .setCharacteristic(Characteristic.HardwareRevision, this.config.version);
-  }
-
-  getBridgingStateService() {
-    return new Service.BridgingState()
-      .setCharacteristic(Characteristic.Reachable, true)
-      .setCharacteristic(Characteristic.LinkQuality, 4)
-      .setCharacteristic(Characteristic.AccessoryIdentifier, this.name)
-      .setCharacteristic(Characteristic.Category, Accessory.Categories.SWITCH);
   }
 
   getSwitchService() {
@@ -57,7 +51,8 @@ class RandomAccessory {
     this._switchService.getCharacteristic(Characteristic.On)
       .on('set', this._setState.bind(this));
 
-    this._switchService.addCharacteristic(Characteristic.RandomValue);
+    // Use an existing characteristic for random value
+    this._switchService.addCharacteristic(Characteristic.CurrentTemperature);
 
     this._switchService.isPrimaryService = true;
 
@@ -76,9 +71,12 @@ class RandomAccessory {
     this._state.randomValue = parseInt(Math.floor(Math.random() * (maxValue - minValue + 1) + minValue));
     this.log(`Picked random value: ${this._state.randomValue}`);
 
-    this._switchService
-      .getCharacteristic(Characteristic.RandomValue)
-      .updateValue(this._state.randomValue);
+    if (this._switchService) {
+      // Update the characteristic to reflect the random value
+      this._switchService.getCharacteristic(Characteristic.CurrentTemperature).updateValue(this._state.randomValue);
+    } else {
+        this.log(`Warning: _switchService is undefined for ${this.name}`);
+    }
   }
 
   _setState(value, callback) {

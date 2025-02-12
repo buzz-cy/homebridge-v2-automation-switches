@@ -23,7 +23,7 @@ to keep their state even across crashes, reboots and such.
 
 After [Homebridge](https://github.com/nfarina/homebridge) has been installed:
 
- ```sudo npm install -g homebridge-automation-switches```
+ ```sudo npm install -g homebridge-v2-automation-switches```
 
 ## Example config.json:
 
@@ -94,7 +94,7 @@ See [CONTRIBUTORS](CONTRIBUTORS.md) for acknowledgements to the individuals that
 
 If you use this and like it - please leave a note by staring this package here or on GitHub.
 
-If you use it and have a problem, file an issue at [GitHub](https://github.com/grover/homebridge-automation-switches/issues) - I'll try to help.
+If you use it and have a problem, file an issue at [GitHub](https://github.com/buzz-cy/homebridge-v2-automation-switches/issues) - I'll try to help.
 
 If you tried this, but don't like it: tell me about it in an issue too. I'll try my best
 to address these in my spare time.
@@ -105,7 +105,7 @@ If you fork this, go ahead - I'll accept pull requests for enhancements.
 
 MIT License
 
-Copyright (c) 2017 Michael Fröhlich
+Copyright (c) 2025 Buzz-cy
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
